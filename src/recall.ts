@@ -62,7 +62,7 @@ export function recallInstruction(tool: SearchTool, path: string): string {
 /** `full` when the call loads the entire stored file into context; `scoped` for searches, ranged reads, and sandboxed processing. */
 export function classifyRecall(toolName: string, input: unknown, path: string): "full" | "scoped" {
   const record = typeof input === "object" && input !== null ? input as Record<string, unknown> : {};
-  if (toolName === "read") return typeof record.offset === "number" || typeof record.limit === "number" ? "scoped" : "full";
+  if (toolName === "read" || toolName === "warden_expand") return typeof record.offset === "number" || typeof record.limit === "number" ? "scoped" : "full";
   const command = typeof record.command === "string" ? record.command : typeof record.code === "string" ? record.code : undefined;
   if (!command) return "scoped";
   // The pipeline segment that names the path decides: a bare cat/type/Get-Content dumps everything; anything else scopes it.

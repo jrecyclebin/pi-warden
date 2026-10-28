@@ -798,6 +798,7 @@ Two agent tools let the agent hand warden what it must not lose in a long sessio
 
   Loops are stored per session and per project in pi-warden's data folder, so they survive compaction and resume; a loop of one session never shows in another session or another project. `/warden loops` lists them for the user.
 - **`warden_recall`** answers "what did I already try?" for this session: the failed attempts with their error lines, the last passing check with whether the code changed since, and the saved-output paths. It prints the same section text the compaction appendix builds from the same session state, so the two never disagree. Read-only; it takes no arguments.
+- **`warden_expand`** answers "what was in the part that was cut?" for one saved output: given the full-output file a filtered or excerpted result's footer named, it returns that text byte for byte — or only a line range, with `offset` and `limit`, read-tool semantics. The trade is deliberate: a scoped expand keeps the context the filter saved, a whole expand puts the full output back into context and is counted as a whole-file recall in the ledger, exactly like a whole-file read of the stored file. Only files pi-warden itself stored are expanded — a path read from the text alone is refused — and nothing leaves the machine for Jev.
 
 ## Token Guardian observer
 

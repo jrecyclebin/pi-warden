@@ -3086,6 +3086,38 @@ export default function wardenExtension(host: ExtensionAPI): void {
     },
   });
 
+  pi.registerTool({
+    name: "warden_expand",
+    label: "warden expand",
+    description: "Return the full text behind a stored full-output file, byte for byte. A filtered or excerpted result's footer names the file; use this instead of re-running the command when the omitted text matters. Prefer offset and limit (a scoped expand keeps the context saving; a whole expand puts the full output back). Only files pi-warden itself stored are expanded; warden_recall lists them.",
+    parameters: toolParameters({
+      path: { type: "string", description: "The full-output file a filtered or excerpted result's footer named (Full output: ...)." },
+      offset: { type: "integer", minimum: 1, description: "First line to return, 1-based, like the read tool." },
+      limit: { type: "integer", minimum: 1, description: "How many lines to return from offset; without it, from offset to the end." },
+    }, ["path"]),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const config = configFor(ctx);
+      if (!config.enabled) return toolReply("not available: pi-warden is off (enabled is false)");
+      const input = params as { path?: unknown; offset?: unknown; limit?: unknown };
+      // Only files pi-warden itself stored: a path read from the text alone is never trusted.
+      const path = typeof input.path === "string" ? input.path : "";
+      if (!ledger.storedPaths().includes(path)) return toolReply("not a stored full output from this session; warden_recall lists the ones there are");
+      try {
+        const text = await readFile(path, "utf8");
+        const scoped = typeof input.offset === "number" || typeof input.limit === "number";
+        if (!scoped) return toolReply(`[pi-warden: the whole stored output, ${text.endsWith("\n") ? text.split("\n").length - 1 : text.split("\n").length} lines. This puts the full output back into context.]\n${text}`);
+        const lines = text.split("\n");
+        const count = text.endsWith("\n") ? lines.length - 1 : lines.length;
+        const offset = typeof input.offset === "number" && input.offset >= 1 ? Math.floor(input.offset) : 1;
+        const limit = typeof input.limit === "number" && input.limit >= 1 ? Math.floor(input.limit) : undefined;
+        const end = Math.min(offset - 1 + (limit ?? count - offset + 1), count);
+        return toolReply(`[pi-warden: lines ${offset}-${end} of ${count}.]\n${lines.slice(offset - 1, end).join("\n")}`);
+      } catch {
+        return toolReply("the stored full-output file is gone (temp files are cleaned between sessions); re-run the command that produced it");
+      }
+    },
+  });
+
   const actions = ["status", "rules", "report", "improve", "enable", "disable", "mode", "config", "test", "trace", "init", "audit", "index", "prefs", "loops", "recommend", "bench"];
   pi.registerCommand("warden", {
     description: "pi-warden status, active rules, config (set/get/editor), TypeSafe consent, mode, trace panel, recommend, standing preferences, improve, open loops, and a synthetic guard test",

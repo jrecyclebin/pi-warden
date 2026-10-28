@@ -342,7 +342,7 @@ before(async () => {
   const registered = extension.commands.get("warden");
   assert.ok(registered);
   command = registered;
-  assert.deepEqual([...extension.tools.keys()], ["warden_remember", "warden_loops", "warden_recall"], "pi-warden registers its lesson, loops, and recall tools");
+  assert.deepEqual([...extension.tools.keys()], ["warden_remember", "warden_loops", "warden_recall", "warden_expand"], "pi-warden registers its lesson, loops, recall, and expand tools");
   // The runtime's action methods throw until Pi's runner binds them; capture steer messages instead.
   result.runtime.sendMessage = (message, options) => { sentMessages.push({ message: message as { customType: string; content: string }, ...(options ? { options: options as Record<string, unknown> } : {}) }); };
   result.runtime.sendUserMessage = (content: string | unknown[]) => { sentUserMessages.push(typeof content === "string" ? content : JSON.stringify(content)); };
@@ -6616,4 +6616,29 @@ test("conscience: a tip set for one run is gone from the next run's system promp
   assert.match(first, /impeccable/, "the tip rides the next run's system prompt");
   const second = await nextPromptAppend("design a third page");
   assert.doesNotMatch(second, /impeccable/, "and only that one run");
+});
+
+test("warden_expand returns a stored full output byte for byte, scoped stays scoped, and other paths are refused", async () => {
+  await writeConfig(JSON.stringify({  typesafe: true, stuck: { enabled: false } , ...STACK_BAR }));
+  nextAnswers = { retention: "summary_only" };
+  const full = `head line\n${"middle line\n".repeat(2000)}tail line\n`;
+  const result = await toolResult("bash", { command: "npm test" }, full, false) as { content: Array<{ text: string }> };
+  const path = result.content[0]!.text.match(/Full output: (.+)/)![1]!;
+  try {
+    const expand = (params: Record<string, unknown>) => extension.tools.get("warden_expand")!.definition.execute("call-e", params, undefined, undefined, context() as unknown as ExtensionContext)
+      .then(reply => (reply.content[0] as { text: string }).text);
+    const whole = await expand({ path });
+    assert.ok(whole.includes("the whole stored output, 2002 lines"), "the header says what came back");
+    assert.equal(whole.slice(whole.indexOf("\n") + 1), full, "the whole stored output is byte for byte");
+    const scoped = await expand({ path, offset: 2000, limit: 5 });
+    assert.match(scoped, /^\[pi-warden: lines 2000-2002 of 2002\.\]/, "the range clamps to the file's end");
+    assert.equal(scoped.slice(scoped.indexOf("\n") + 1), ["middle line", "middle line", "tail line"].join("\n"), "a ranged expand returns exactly those lines");
+    assert.match(await expand({ path: "/etc/passwd" }), /not a stored full output/);
+    assert.match(await expand({ path: "/tmp/pi-warden-output-notthere/output.txt" }), /not a stored full output/);
+    // The expand is a recall like a read of the stored file: whole counts whole, scoped stays scoped.
+    await toolCall("warden_expand", { path });
+    assert.ok(widgets.at(-1)?.some(line => /full output recalled \(full\)/.test(line) || /read · full output recalled/.test(line)), "a whole expand is a whole-file recall");
+    await runCommand("status");
+    assert.match(notices.at(-1)!.text, /1 recall of the full output \(100%; 1 whole-file, 0 scoped\)/);
+  } finally { await rm(join(path, ".."), { recursive: true, force: true }); }
 });

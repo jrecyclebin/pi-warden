@@ -28,6 +28,9 @@ test("the recall footer names the file, a scoped search, and a ranged read, and 
 
 test("recall classification: whole-file reads and bare cat are full; searches, ranges, and pipelines are scoped", () => {
   assert.equal(classifyRecall("read", { path }, path), "full");
+  assert.equal(classifyRecall("warden_expand", { path }, path), "full", "an expand without a range puts the whole output back");
+  assert.equal(classifyRecall("warden_expand", { path, offset: 100, limit: 40 }, path), "scoped");
+  assert.equal(classifyRecall("warden_expand", { path, limit: 40 }, path), "scoped");
   assert.equal(classifyRecall("read", { path, offset: 100, limit: 40 }, path), "scoped");
   assert.equal(classifyRecall("bash", { command: `cat ${path}` }, path), "full");
   assert.equal(classifyRecall("bash", { command: `cat ${path} | grep -n error` }, path), "full", "the segment that names the file dumps it whole");
