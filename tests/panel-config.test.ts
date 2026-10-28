@@ -20,6 +20,7 @@ const selectors = [
   { path: "widget.barMode", options: ["stack", "live"] },
   { path: "conscience.skills.mode", options: ["off", "recommend", "load"] },
   { path: "context.recallTool", options: ["auto", "rg", "ag", "ugrep", "git-grep", "grep", "select-string", "findstr", "none"] },
+  { path: "compaction.strategy", options: ["relevance", "fast-jev"] },
 ] satisfies Array<{ path: string; options: readonly string[] }>;
 
 /** Build the real overlay with temporary host directories and observe only public interactions. */

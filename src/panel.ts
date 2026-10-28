@@ -3,7 +3,7 @@ import type { Component, TuiMouseEvent, TuiMouseEventResult } from "@earendil-wo
 import { DECISIONS_BACKENDS } from "pi-typesafe";
 import { resolveJudgmentBackend } from "./backend.js";
 import type { WardenConfig } from "./config.js";
-import { CONSCIENCE_SKILL_MODES, RECALL_TOOLS, WARDEN_MODES, applyUserOverrides, defaultConfig, getNestedValue, readUserConfig, setNestedValue, writeUserConfig } from "./config.js";
+import { COMPACTION_STRATEGIES, CONSCIENCE_SKILL_MODES, RECALL_TOOLS, WARDEN_MODES, applyUserOverrides, defaultConfig, getNestedValue, readUserConfig, setNestedValue, writeUserConfig } from "./config.js";
 import type { HostDirs } from "./host-dirs.js";
 import { defaultHostDirs } from "./host-dirs.js";
 import type { Trace } from "./trace.js";
@@ -198,6 +198,7 @@ const SELECTOR_OPTIONS: Readonly<Record<string, readonly string[]>> = {
   "widget.barMode": WIDGET_BAR_MODES,
   "conscience.skills.mode": CONSCIENCE_SKILL_MODES,
   "context.recallTool": RECALL_TOOLS,
+  "compaction.strategy": COMPACTION_STRATEGIES,
 };
 
 function isCustomBackend(value: unknown): value is Record<string, unknown> {

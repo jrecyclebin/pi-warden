@@ -298,11 +298,17 @@ export interface FilterConfig {
   timeoutMs: number;
 }
 
+/** Which compaction writes the summary when `compaction.enabled` is on. */
+export const COMPACTION_STRATEGIES = ["relevance", "fast-jev"] as const;
+export type CompactionStrategy = (typeof COMPACTION_STRATEGIES)[number];
+
 /** Relevance compaction (relevance.ts): Jev picks what of the discarded span is kept word for word instead of Pi's summary. */
 export interface CompactionConfig {
   /** Replace Pi's compaction summary with a relevance compaction. Off by default. User file only: it sends data and spends requests. */
   enabled: boolean;
-  /** P(needed again) at or above which a unit is kept word for word. */
+  /** The compaction algorithm that runs: "relevance" (units scored one question each) or "fast-jev" (the fast-jev-compaction port: every tool call scored in one pass, text kept verbatim). User file only: it changes what is sent. */
+  strategy: CompactionStrategy;
+  /** P(needed again) at or above which a unit is kept word for word. Both strategies: the relevance compaction's keep bar and the fast-jev strategy's call/result bar. */
   keepThreshold: number;
   /** Size budget for the summary in tokens (characters / 4); over it the threshold is raised, then Pi's summary runs. */
   maxSummaryTokens: number;
@@ -312,6 +318,14 @@ export interface CompactionConfig {
   maxRequests: number;
   /** Providers of the active model for which Pi's summary always runs (a provider that compacts on its own). */
   skipProviders: string[];
+  /** fast-jev only: newest messages of the span whose calls are never touched (the first message is always kept). */
+  preserveRecentMessages: number;
+  /** fast-jev only: estimated token ceiling for the state every request carries (also bounded by the request size limit). */
+  maxStateTokens: number;
+  /** fast-jev only: estimated token ceiling for the state plus one batch of questions. */
+  maxRequestTokens: number;
+  /** fast-jev only: characters of a dropped tool result kept before the truncation note. */
+  truncateHeadChars: number;
 }
 
 export interface LargeOutputConfig {
@@ -609,7 +623,8 @@ export function defaultConfig(): WardenConfig {
     trial: { silentHalf: false },
     waste: { enabled: true, tip: false, every: 20, sleep: true, paging: true, search: true, recheck: true },
     // pi-claude-bridge compacts its own models and cancels on failure; its summary must not be replaced.
-    compaction: { enabled: false, keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, skipProviders: ["claude-bridge"] },
+    // The fast-jev strategy's defaults are the upstream fast-jev-compaction's own; the request size limit keeps them honest.
+    compaction: { enabled: false, strategy: "relevance", keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, skipProviders: ["claude-bridge"], preserveRecentMessages: 6, maxStateTokens: 25000, maxRequestTokens: 30000, truncateHeadChars: 300 },
     warnings: [],
   };
 }
@@ -661,6 +676,10 @@ function boolean(value: unknown, fallback: boolean): boolean {
 
 function positiveInteger(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function nonNegativeInteger(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : fallback;
 }
 
 export function isMode(value: unknown): value is WardenMode {
@@ -1200,14 +1219,23 @@ const MAX_COMPACTION_TIMEOUT_MS = 120_000;
 
 function applyCompaction(base: CompactionConfig, raw: unknown, source: "user" | "project"): CompactionConfig {
   if (!isObject(raw)) return base;
+  const strategy: CompactionStrategy = source === "user" && typeof raw.strategy === "string" && (COMPACTION_STRATEGIES as readonly string[]).includes(raw.strategy)
+    ? raw.strategy as CompactionStrategy
+    : base.strategy;
   return {
     // Turning it on sends the session to Jev and spends requests, so only the user decides; a project tunes the rest.
     enabled: source === "user" ? boolean(raw.enabled, base.enabled) : base.enabled,
+    // The strategy picks what is sent to the judge, so like `enabled` only the user decides.
+    strategy,
     keepThreshold: probability(raw.keepThreshold, base.keepThreshold),
     maxSummaryTokens: Math.max(1000, positiveInteger(raw.maxSummaryTokens, base.maxSummaryTokens)),
     timeoutMs: Math.min(MAX_COMPACTION_TIMEOUT_MS, positiveInteger(raw.timeoutMs, base.timeoutMs)),
     maxRequests: positiveInteger(raw.maxRequests, base.maxRequests),
     skipProviders: globList(raw.skipProviders, base.skipProviders),
+    preserveRecentMessages: nonNegativeInteger(raw.preserveRecentMessages, base.preserveRecentMessages),
+    maxStateTokens: Math.max(1000, positiveInteger(raw.maxStateTokens, base.maxStateTokens)),
+    maxRequestTokens: Math.max(1000, positiveInteger(raw.maxRequestTokens, base.maxRequestTokens)),
+    truncateHeadChars: nonNegativeInteger(raw.truncateHeadChars, base.truncateHeadChars),
   };
 }
 
@@ -1462,11 +1490,16 @@ export const PROJECT_KEYS: Readonly<Record<string, ProjectKeyClass>> = {
   "waste.recheck": { kind: "off", check: "waste recheck note" },
 
   "compaction.enabled": { kind: "none", why: "user file only: turning it on spends requests" },
+  "compaction.strategy": { kind: "none", why: "user file only: it picks what is sent to the judge" },
   "compaction.keepThreshold": { kind: "none", why: "how much context is kept" },
   "compaction.maxSummaryTokens": { kind: "none", why: "the summary's size" },
   "compaction.timeoutMs": { kind: "none", why: "the compaction deadline" },
   "compaction.maxRequests": { kind: "none", why: "the compaction budget" },
   "compaction.skipProviders": { kind: "none", why: "which providers keep their own summary" },
+  "compaction.preserveRecentMessages": { kind: "none", why: "how many recent calls are never touched" },
+  "compaction.maxStateTokens": { kind: "none", why: "the state's size" },
+  "compaction.maxRequestTokens": { kind: "none", why: "the request's size" },
+  "compaction.truncateHeadChars": { kind: "none", why: "how much of a dropped result is kept" },
 
   "prefs.enabled": { kind: "none", why: "standing preferences are context, not a check" },
   "prefs.inject": { kind: "none", why: "standing preferences are context, not a check" },

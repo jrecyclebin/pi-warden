@@ -92,6 +92,7 @@ Every guard and feature, its default, and its status. Defaults are `defaultConfi
 | ↳ Compaction evidence appendix | After a compaction, lists failed calls, the last passing check, holds, and saved outputs | On | Stable |
 | [Context filter](docs/guards.md#context-filter-beta-off-by-default) | Jev scores chunks of a large output and keeps the ones for the current task | Off. `context.filter.enabled` | Beta |
 | [Relevance compaction](docs/guards.md#relevance-compaction) | Writes the compaction summary instead of Pi's model; not recommended | Off. `compaction.enabled` (user file only) | Experimental |
+| ↳ [Fast-jev compaction](docs/guards.md#fast-jev-compaction) | The port of fast-jev-compaction: every tool call scored in one pass, the kept conversation verbatim instead of a summary | Off. `compaction.enabled` + `compaction.strategy: "fast-jev"` (user file only) | Experimental |
 | [Call-waste notes](docs/guards.md#call-waste) | One advisory line on polling, paging, repeated searches, and re-filtered checks | On | Stable |
 | ↳ Session tip | Adds one paragraph about call cost to the system prompt | Off. `waste.tip` | Stable |
 | [Open loops and recall](docs/guards.md#open-loops-and-recall) | `warden_loops` keeps the agent's promises; `warden_recall` lists what it already tried | On, no switch | Stable |
@@ -163,7 +164,7 @@ Thresholds are set on recorded sessions. Where the data allows, a threshold is c
 
 ## Privacy
 
-Secrets and unshown paths are stripped before anything leaves your machine. The offline guards send nothing. The opt-in features send more when you turn them on: the context filter sends a large output whole, redacted, in chunks; relevance compaction sends an outline of the conversation and a sample of each tool result. [Exactly what is sent →](docs/data-handling.md)
+Secrets and unshown paths are stripped before anything leaves your machine. The offline guards send nothing. The opt-in features send more when you turn them on: the context filter sends a large output whole, redacted, in chunks; relevance compaction sends an outline of the conversation and a sample of each tool result; the fast-jev compaction strategy sends the whole conversation being compacted, redacted, with size notes in place of tool outputs. [Exactly what is sent →](docs/data-handling.md)
 
 ## Credits
 

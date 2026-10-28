@@ -6,6 +6,10 @@ How to keep this current: add the entry in the same pull request as the change, 
 
 ## Unreleased
 
+### Added
+
+- The fast-jev compaction strategy: a port of tamaratran/fast-jev-compaction (MIT) as a second `compaction.strategy`. With `compaction.enabled` on and `"strategy": "fast-jev"`, every tool call in the span is scored in one pass — two `noul` questions per call, whether the call and whether its full result stay — and the summary becomes the kept conversation verbatim: text never removed, a dropped result truncated to its head, a dropped call one line. The whole span (results as size notes, redacted, fitted into `maxStateTokens` and the request size limit in stages) rides every request through the session's own Jev connection. New keys `compaction.strategy` (user file only), `compaction.preserveRecentMessages` (6), `compaction.maxStateTokens` (25000), `compaction.maxRequestTokens` (30000), `compaction.truncateHeadChars` (300); every other `compaction` key applies to both strategies, and `/warden status` names the strategy. Any failure — consent, budget, reserve, deadline, an unfittable state, or a summary past `maxSummaryTokens` — leaves Pi's own summary in place.
+
 <!-- Empty. Next release starts here. -->
 
 ## 2.2.3

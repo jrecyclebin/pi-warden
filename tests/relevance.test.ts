@@ -226,10 +226,12 @@ test("a span with no scored unit needs no request", async () => {
 });
 
 test("config: off by default, user overrides, clamps, and a missing section keeps Pi's summary", () => {
-  assert.deepEqual(defaultConfig().compaction, { enabled: false, keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, skipProviders: ["claude-bridge"] });
-  const user = applyUserOverrides(defaultConfig(), { compaction: { enabled: true, keepThreshold: 0.7, maxSummaryTokens: 10, timeoutMs: 999999, maxRequests: 0, skipProviders: ["a", "", 3] } });
-  assert.deepEqual(user.compaction, { enabled: true, keepThreshold: 0.7, maxSummaryTokens: 1000, timeoutMs: 120000, maxRequests: 12, skipProviders: ["a"] });
-  assert.deepEqual(applyUserOverrides(defaultConfig(), { compaction: { keepThreshold: 7 } }).compaction.keepThreshold, 0.5);
+  assert.deepEqual(defaultConfig().compaction, { enabled: false, strategy: "relevance", keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, skipProviders: ["claude-bridge"], preserveRecentMessages: 6, maxStateTokens: 25000, maxRequestTokens: 30000, truncateHeadChars: 300 });
+  const user = applyUserOverrides(defaultConfig(), { compaction: { enabled: true, strategy: "fast-jev", keepThreshold: 0.7, maxSummaryTokens: 10, timeoutMs: 999999, maxRequests: 0, skipProviders: ["a", "", 3], preserveRecentMessages: 3, truncateHeadChars: 0, maxStateTokens: 5, maxRequestTokens: 5 } });
+  assert.deepEqual(user.compaction, { enabled: true, strategy: "fast-jev", keepThreshold: 0.7, maxSummaryTokens: 1000, timeoutMs: 120000, maxRequests: 12, skipProviders: ["a"], preserveRecentMessages: 3, truncateHeadChars: 0, maxStateTokens: 1000, maxRequestTokens: 1000 });
+  assert.equal(applyUserOverrides(defaultConfig(), { compaction: { keepThreshold: 7 } }).compaction.keepThreshold, 0.5);
+  assert.equal(applyUserOverrides(defaultConfig(), { compaction: { strategy: "nonsense" } }).compaction.strategy, "relevance", "an unknown strategy is refused");
+  assert.equal(applyProjectOverrides(defaultConfig(), { compaction: { strategy: "fast-jev" } }).compaction.strategy, "relevance", "a project cannot pick the strategy");
   const { compaction: _dropped, ...stale } = defaultConfig();
   const shaped = completeConfig(stale);
   assert.equal(shaped.config.compaction.enabled, false);
@@ -237,10 +239,14 @@ test("config: off by default, user overrides, clamps, and a missing section keep
 });
 
 test("status line", () => {
-  assert.equal(formatCompaction(false, { runs: 0, replaced: 0, fallbacks: {} }), "Relevance compaction: off (compaction.enabled).");
-  assert.equal(formatCompaction(true, { runs: 0, replaced: 0, fallbacks: {} }), "Relevance compaction: on; no compaction yet this session.");
-  assert.equal(formatCompaction(true, { runs: 2, replaced: 1, fallbacks: { timeout: 1 }, last: { candidates: 9, kept: 3, dropped: 6, requests: 1, inputTokens: 10, elapsedMs: 1500, threshold: 0.5, summaryTokens: 800 } }),
+  const relevance = { enabled: false, strategy: "relevance" as const };
+  const fastJev = { enabled: true, strategy: "fast-jev" as const };
+  assert.equal(formatCompaction(relevance, { runs: 0, replaced: 0, fallbacks: {} }), "Relevance compaction: off (compaction.enabled).");
+  assert.equal(formatCompaction(fastJev, { runs: 0, replaced: 0, fallbacks: {} }), "Fast-jev compaction: on; no compaction yet this session.");
+  assert.equal(formatCompaction({ ...relevance, enabled: true }, { runs: 2, replaced: 1, fallbacks: { timeout: 1 }, last: { candidates: 9, kept: 3, dropped: 6, requests: 1, inputTokens: 10, elapsedMs: 1500, threshold: 0.5, summaryTokens: 800 } }),
     "Relevance compaction: 2 compactions, 1 replaced Pi's summary, Pi's summary ran instead (timeout 1). Last: kept 3 of 9 scored units, 1 request, 1.5 s, ~800 tokens.");
+  assert.equal(formatCompaction(fastJev, { runs: 1, replaced: 1, fallbacks: {}, last: { candidates: 9, kept: 3, dropped: 6, requests: 2, inputTokens: 10, elapsedMs: 1500, threshold: 0.5, summaryTokens: 800, resultsDropped: 4, callsDropped: 2, stateTokens: 21000, stateStage: "full" } }),
+    "Fast-jev compaction: 1 compaction, 1 replaced Pi's summary. Last: kept 3 of 9 scored units, 4 results truncated, 2 calls dropped, state ~21000 tokens (full), 2 requests, 1.5 s, ~800 tokens.");
 });
 
 test("wrapper: a kept tool result, a user message, and an earlier summary part cannot open or close Pi's <summary>", async () => {
