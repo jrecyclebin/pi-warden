@@ -31,10 +31,10 @@ function fakeJudge(rate: (chunk: string) => number, sent: Request[] = [], delayM
 const needle = (chunk: string) => chunk.includes("NEEDLE") ? 3 : 0;
 
 test("filter config: off by default, parsed from user and project files, malformed values keep defaults", () => {
-  assert.deepEqual(config(), { enabled: false, chunkChars: 2000, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 });
+  assert.deepEqual(config(), { enabled: false, chunkChars: 2000, segments: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 });
   for (const apply of [applyUserOverrides, applyProjectOverrides]) {
     const on = apply(defaultConfig(), { context: { filter: { enabled: true, chunkChars: 3000, minScore: 2, maxKeptChars: 8000, timeoutMs: 2500 } } });
-    assert.deepEqual(on.context.filter, { enabled: apply === applyUserOverrides, chunkChars: 3000, minScore: 2, maxKeptChars: 8000, timeoutMs: 2500 });
+    assert.deepEqual(on.context.filter, { enabled: apply === applyUserOverrides, chunkChars: 3000, segments: false, minScore: 2, maxKeptChars: 8000, timeoutMs: 2500 });
     const bad = apply(defaultConfig(), { context: { filter: { enabled: "yes", chunkChars: -5, minScore: 4, maxKeptChars: 1.5, timeoutMs: 0 } } });
     assert.deepEqual(bad.context.filter, config());
     assert.deepEqual(apply(defaultConfig(), { context: { filter: null } }).context.filter, config());
@@ -91,7 +91,7 @@ test("above maxKeptChars the highest scores win and original order is restored",
 
 test("batches stay under the request size and question limits and cover each chunk once", () => {
   const chunks = chunkLines(log(1200), 2000);
-  const batches = buildFilterBatches(chunks, input);
+  const batches = buildFilterBatches(chunks.map(text => ({ text })), input);
   assert.ok(batches.length >= 2, "a 50k output needs more than one request");
   for (const batch of batches) {
     assert.ok(Buffer.byteLength(JSON.stringify({ state: batch.state, questions: batch.questions })) <= FILTER_REQUEST_BYTES);
@@ -107,12 +107,12 @@ test("batches stay under the request size and question limits and cover each chu
   assert.deepEqual(question.criteria, [...FILTER_RUBRIC]);
   assert.match(String(question.instructions), /agent's current task/);
   // Tiny chunks hit the question limit before the size limit.
-  assert.deepEqual(buildFilterBatches(Array.from({ length: 40 }, (_, index) => `${index}\n`), input).map(batch => batch.ids.length), [32, 8]);
+  assert.deepEqual(buildFilterBatches(Array.from({ length: 40 }, (_, index) => ({ text: `${index}\n` })), input).map(batch => batch.ids.length), [32, 8]);
 });
 
 test("chunk text, task, plan, and command are redacted before they leave", () => {
   const secret = "ghp_" + "Qk7mZ2xR9vT4bN8cL1pW6sD3fH5jK0aYuE2i";
-  const [batch] = buildFilterBatches([`token ${secret}\n`], { ...input, task: `use ${secret}`, plan: `print ${secret}`, command: `echo ${secret}` });
+  const [batch] = buildFilterBatches([{ text: `token ${secret}\n` }], { ...input, task: `use ${secret}`, plan: `print ${secret}`, command: `echo ${secret}` });
   assert.ok(!JSON.stringify(batch).includes(secret));
 });
 

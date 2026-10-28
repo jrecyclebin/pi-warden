@@ -34,6 +34,8 @@ export type { CuratedRule, CuratorSnapshot } from "./curator.js";
 export { relevanceCompaction, buildUnits, buildRequests, candidates as compactionCandidates, outline as compactionOutline, renderSummary, keepQuestion, formatCompaction, summaryTokens, RELEVANCE_HEADER, KEEP_CHARS, MAX_QUESTIONS, MAX_REQUEST_BYTES } from "./relevance.js";
 export { footprints, relations, supersedeNote, ANY_FILE } from "./supersede.js";
 export type { Footprint, FootprintKind, Relation, ObservedCall } from "./supersede.js";
+export { detectKind, findTraceRegions, segmentOutput, segmentId, segmentTokens, MAX_SEGMENT_TOKENS } from "./segments.js";
+export type { Segment, SegmentKind } from "./segments.js";
 export type { SpanMessage, Unit, ScoredUnit, ToolUnit, NoteUnit, SummaryUnit, FileLists, RelevanceInput, RelevanceOptions, RelevanceResult, FallbackReason, CompactionStats, KeepRequest } from "./relevance.js";
 export { HoldLedger, HoldLog, holdLogPath, formatHolds, outcomeNote, regretsAt, textRegrets } from "./holds.js";
 export type { CallOutcome, CallRecord, CallScores, HoldSnapshot, OutcomeVia } from "./holds.js";
