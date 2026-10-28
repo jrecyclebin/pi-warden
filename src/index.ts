@@ -33,6 +33,8 @@ export { buildCuratorRequest, curatedRuleList, curatedRules, curatorPercentile, 
 export type { CuratedRule, CuratorSnapshot } from "./curator.js";
 export { relevanceCompaction, buildUnits, buildRequests, candidates as compactionCandidates, outline as compactionOutline, renderSummary, keepQuestion, formatCompaction, summaryTokens, RELEVANCE_HEADER, KEEP_CHARS, MAX_QUESTIONS, MAX_REQUEST_BYTES } from "./relevance.js";
 export type { SpanMessage, Unit, ScoredUnit, ToolUnit, NoteUnit, SummaryUnit, FileLists, RelevanceInput, RelevanceOptions, RelevanceResult, FallbackReason, CompactionStats, KeepRequest } from "./relevance.js";
+export { fastCompaction, fastCompactionPlan, spanEntries, renderFastSummary, FAST_JEV_HEADER } from "./fast-compaction.js";
+export type { FastCompactionInput, FastCompactionOptions, FastCompactionResult, FastCompactionPlan, FastCompactionStats, FastCall, FastEntry, CallDecision, CompactionState, FittedState } from "./fast-compaction.js";
 export { HoldLedger, HoldLog, holdLogPath, formatHolds, outcomeNote, regretsAt, textRegrets } from "./holds.js";
 export type { CallOutcome, CallRecord, CallScores, HoldSnapshot, OutcomeVia } from "./holds.js";
 export type { ContextLedgerSnapshot, RecallKind } from "./saver.js";

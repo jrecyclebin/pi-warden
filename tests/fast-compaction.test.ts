@@ -238,6 +238,7 @@ test("the span is kept verbatim: kept results whole, a dropped result truncated 
   assert.equal(outcome.stats.requests, 1);
   assert.equal(outcome.stats.stateStage, "full");
   assert.ok(outcome.stats.stateTokens > 0);
+  assert.deepEqual(outcome.decisions.map(decision => [decision.id, decision.action]), [["t1", "keep"], ["t2", "drop_result"], ["t3", "drop_call"]], "the decisions ride the result");
   // The state carries the whole conversation with notes for results and the goal.
   const state = sent[0]!.state as CompactionState;
   assert.equal(state.goal, "Fix the failing test.");
@@ -322,12 +323,15 @@ test("the state is redacted; the summary keeps the original text", async () => {
   assert.ok(outcome.summary.includes(token), "the kept result keeps the original text");
 });
 
-test("the summary over maxSummaryTokens falls back to Pi's own", async () => {
+test("the summary over maxSummaryTokens falls back to Pi's own, and the floor check spends no request", async () => {
   const messages: SpanMessage[] = [{ role: "user", content: "z".repeat(9000) }, { role: "assistant", content: [call("c1", "read", { path: "a" })] }, result("c1", "read", "r".repeat(2000))];
-  const outcome = await run({ messages, task: "t" }, { maxSummaryTokens: 1000 }, fakeJudge({ call_t1: 0.9, result_t1: 0.9 }));
+  const sent: Array<{ state: unknown; questions: Record<string, unknown> }> = [];
+  const outcome = await run({ messages, task: "t" }, { maxSummaryTokens: 1000 }, fakeJudge({ call_t1: 0.9, result_t1: 0.9 }, sent));
   assert.ok(!outcome.ok);
   assert.equal(outcome.reason, "too large");
-  assert.match(outcome.detail ?? "", /maxSummaryTokens is 1000/);
+  assert.match(outcome.detail ?? "", /smallest possible summary/);
+  assert.equal(sent.length, 0, "a span whose smallest summary cannot fit spends nothing");
+  assert.equal(outcome.stats.requests, 0);
 });
 
 test("failures return a reason and no summary: timeout, abort, judge error, budget, too-large state", async () => {

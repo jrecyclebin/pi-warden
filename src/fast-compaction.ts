@@ -614,21 +614,66 @@ export interface FastCompactionOptions {
 }
 
 export type FastCompactionResult =
-  | { ok: true; summary: string; files: FileLists; stats: FastCompactionStats }
+  | { ok: true; summary: string; files: FileLists; decisions: CallDecision[]; stats: FastCompactionStats }
   | { ok: false; reason: FallbackReason; detail?: string; stats: FastCompactionStats };
+
+/** What a fast-jev compaction would ask, computed without sending anything: the caller's plan and budget check. */
+export interface FastCompactionPlan {
+  entries: FastEntry[];
+  files: FileLists;
+  /** Calls the run would ask about: unpinned, unflagged, with a result. */
+  candidates: FastCall[];
+  /** Question batches; empty when no call is a candidate. */
+  batches: FastCall[][];
+  /** The fitted state every request would carry, undefined when no request is needed. */
+  fitted: FittedState | undefined;
+  /** The summary's smallest possible size: every candidate dropped. Past the budget, no answer can fit. */
+  floorTokens: number;
+  /** Set when planning failed (an unfittable state or a floor past the budget): the compaction falls back without spending. */
+  tooLarge: string | undefined;
+}
 
 const DEADLINE_SLACK_MS = 1000;
 const TASK_CHARS = 2000;
 const FOCUS_CHARS = 500;
 
-/** Characters of text, tool input, and tool output the span holds, ported from fast-jev-compaction. */
-function entryChars(entry: FastEntry): number {
-  let total = entry.text.length;
-  for (const call of entry.calls) {
-    total += call.call.length;
-    total += call.result?.length ?? 0;
+/** The state's goal and framing fields, as the run and the plan both build them. */
+function stateGoal(input: Pick<FastCompactionInput, "task" | "spine" | "focus">): { goal: string; request: string; focus?: string; earlier?: string[] } {
+  const spine = input.spine;
+  return {
+    goal: spine?.goal?.trim() ? clip(spine.goal, TASK_CHARS) : clip(input.task, TASK_CHARS),
+    request: clip(input.task, TASK_CHARS),
+    ...(input.focus?.trim() ? { focus: clip(input.focus.trim(), FOCUS_CHARS) } : {}),
+    ...(spine?.history.length ? { earlier: spine.history } : {}),
+  };
+}
+
+/** Everything a fast-jev compaction decides before its first request, so a plan and a run can never drift apart. */
+export function fastCompactionPlan(
+  input: FastCompactionInput,
+  options: { config: Pick<CompactionConfig, "keepThreshold" | "maxSummaryTokens" | "preserveRecentMessages" | "maxStateTokens" | "maxRequestTokens" | "truncateHeadChars">; maxQuestions?: number },
+): FastCompactionPlan {
+  const { entries, files } = spanEntries(input, options.config.preserveRecentMessages);
+  const calls = entries.flatMap(entry => entry.calls);
+  const candidates = calls.filter(call => !call.pinned && !call.flagged && call.result !== undefined);
+  // The smallest summary any answer can produce: every candidate dropped, pinned calls kept.
+  const floorDecisions = calls.map(call => decideCall(call, { keepCall: 0, keepResult: 0 }, options.config.keepThreshold));
+  const floorTokens = summaryTokens(renderFastSummary(entries, floorDecisions, files, options.config.truncateHeadChars));
+  const base: FastCompactionPlan = { entries, files, candidates, batches: [], fitted: undefined, floorTokens, tooLarge: undefined };
+  if (floorTokens > options.config.maxSummaryTokens) return { ...base, tooLarge: `smallest possible summary is ${floorTokens} tokens, maxSummaryTokens is ${options.config.maxSummaryTokens}` };
+  if (candidates.length === 0) return base;
+  let fitted: FittedState;
+  try {
+    fitted = fitState(entries, { preserveRecentMessages: options.config.preserveRecentMessages, maxStateTokens: options.config.maxStateTokens, ...stateGoal(input) });
+  } catch (error) {
+    return { ...base, tooLarge: error instanceof Error ? error.message : String(error) };
   }
-  return total;
+  try {
+    const batches = batchCalls(candidates, fitted.tokens, Buffer.byteLength(JSON.stringify(fitted.state)), { maxRequestTokens: options.config.maxRequestTokens, maxQuestions: Math.max(2, options.maxQuestions ?? MAX_QUESTIONS) });
+    return { ...base, batches, fitted };
+  } catch (error) {
+    return { ...base, fitted, tooLarge: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
@@ -639,64 +684,48 @@ function entryChars(entry: FastEntry): number {
  */
 export async function fastCompaction(input: FastCompactionInput, options: FastCompactionOptions): Promise<FastCompactionResult> {
   const started = Date.now();
-  const { entries, files } = spanEntries(input, options.config.preserveRecentMessages);
-  const calls = entries.flatMap(entry => entry.calls);
-  const candidates = calls.filter(call => !call.pinned && !call.flagged && call.result !== undefined);
+  const maxQuestions = Math.max(2, Math.min(options.questionsPerRequest ?? MAX_QUESTIONS, options.judge.limits?.maxQuestions ?? DEFAULT_BACKEND_LIMITS.maxQuestions));
+  const plan = fastCompactionPlan(input, { config: options.config, maxQuestions });
+  const calls = plan.entries.flatMap(entry => entry.calls);
   const stats: FastCompactionStats = {
-    candidates: candidates.length, kept: 0, dropped: 0, requests: 0, inputTokens: 0, elapsedMs: 0,
+    candidates: plan.candidates.length, kept: 0, dropped: 0, requests: 0, inputTokens: 0, elapsedMs: 0,
     threshold: options.config.keepThreshold, summaryTokens: 0,
-    resultsDropped: 0, callsDropped: 0, pinned: calls.length - candidates.length, stateTokens: 0, stateStage: "",
+    resultsDropped: 0, callsDropped: 0, pinned: calls.length - plan.candidates.length, stateTokens: 0, stateStage: "",
   };
   const fail = (reason: FallbackReason, detail?: string): FastCompactionResult => ({
     ok: false, reason, ...(detail ? { detail } : {}), stats: { ...stats, elapsedMs: Date.now() - started },
   });
   if (options.signal?.aborted) return fail("aborted");
+  // Planning limits are checked before anything is sent, so a compaction that cannot finish spends nothing.
+  if (plan.tooLarge) return fail("too large", plan.tooLarge);
+  if (plan.fitted) {
+    stats.stateTokens = plan.fitted.tokens;
+    stats.stateStage = plan.fitted.stage;
+  }
 
   const answers = new Map<string, CallAnswer>();
-  if (candidates.length > 0) {
-    const spine = input.spine;
-    let fitted: FittedState;
-    try {
-      fitted = fitState(entries, {
-        preserveRecentMessages: options.config.preserveRecentMessages,
-        maxStateTokens: options.config.maxStateTokens,
-        goal: spine?.goal?.trim() ? clip(spine.goal, TASK_CHARS) : clip(input.task, TASK_CHARS),
-        request: clip(input.task, TASK_CHARS),
-        ...(input.focus?.trim() ? { focus: clip(input.focus.trim(), FOCUS_CHARS) } : {}),
-        ...(spine?.history.length ? { earlier: spine.history } : {}),
-      });
-    } catch (error) {
-      return fail("too large", error instanceof Error ? error.message : String(error));
-    }
-    stats.stateTokens = fitted.tokens;
-    stats.stateStage = fitted.stage;
-    const maxQuestions = Math.max(2, Math.min(options.questionsPerRequest ?? MAX_QUESTIONS, options.judge.limits?.maxQuestions ?? DEFAULT_BACKEND_LIMITS.maxQuestions));
-    let batches: FastCall[][];
-    try {
-      batches = batchCalls(candidates, fitted.tokens, Buffer.byteLength(JSON.stringify(fitted.state)), { maxRequestTokens: options.config.maxRequestTokens, maxQuestions });
-    } catch (error) {
-      return fail("too large", error instanceof Error ? error.message : String(error));
-    }
+  if (plan.batches.length > 0) {
     // Both limits are checked before anything is sent, so a compaction that cannot finish spends nothing.
     const cap = options.config.maxRequests;
-    if (batches.length > cap) return fail("budget", `${batches.length} requests needed, compaction.maxRequests is ${cap}`);
+    if (plan.batches.length > cap) return fail("budget", `${plan.batches.length} requests needed, compaction.maxRequests is ${cap}`);
     const left = options.requestsLeft?.();
-    if (left !== undefined && left - batches.length < REQUEST_RESERVE) return fail("budget", `${left} requests left in the session budget, ${batches.length} needed, ${REQUEST_RESERVE} kept for the guards`);
+    if (left !== undefined && left - plan.batches.length < REQUEST_RESERVE) return fail("budget", `${left} requests left in the session budget, ${plan.batches.length} needed, ${REQUEST_RESERVE} kept for the guards`);
 
     const controller = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, options.config.timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
     let failure: { reason: FallbackReason; detail?: string } | undefined;
+    const state = plan.fitted!.state;
     try {
-      await fanOut(batches, async batch => {
+      await fanOut(plan.batches, async batch => {
         // The guards spend from the same budget while this runs, so the reserve is read again before every request.
         const now = options.requestsLeft?.();
         if (now !== undefined && now < REQUEST_RESERVE) throw Object.assign(new Error(`${now} requests left in the session budget, ${REQUEST_RESERVE} kept for the guards`), { code: "reserve" });
         stats.requests++;
         const deadline = Math.max(1, options.config.timeoutMs - (Date.now() - started)) + DEADLINE_SLACK_MS;
         const questions = Object.assign({}, ...batch.map(questionsFor));
-        const answer = await ask(options.judge, { state: fitted.state, questions }, { timeoutMs: Math.min(deadline, options.requestTimeoutMs ?? deadline), signal });
+        const answer = await ask(options.judge, { state, questions }, { timeoutMs: Math.min(deadline, options.requestTimeoutMs ?? deadline), signal });
         if (!answer.ok) throw Object.assign(new Error(answer.error), { code: answer.errorCode });
         stats.inputTokens += answer.usage?.input_tokens ?? 0;
         for (const call of batch) {
@@ -732,9 +761,9 @@ export async function fastCompaction(input: FastCompactionInput, options: FastCo
   stats.resultsDropped = decisions.filter(decision => decision.reason === "result_dropped").length;
   stats.callsDropped = decisions.filter(decision => decision.reason === "call_dropped").length;
   stats.dropped = stats.resultsDropped + stats.callsDropped;
-  const summary = renderFastSummary(entries, decisions, files, options.config.truncateHeadChars);
+  const summary = renderFastSummary(plan.entries, decisions, plan.files, options.config.truncateHeadChars);
   stats.summaryTokens = summaryTokens(summary);
   const budget = options.config.maxSummaryTokens;
   if (stats.summaryTokens > budget) return fail("too large", `${stats.summaryTokens} tokens at threshold ${stats.threshold}, maxSummaryTokens is ${budget}`);
-  return { ok: true, summary, files, stats: { ...stats, elapsedMs: Date.now() - started } };
+  return { ok: true, summary, files: plan.files, decisions, stats: { ...stats, elapsedMs: Date.now() - started } };
 }

@@ -767,6 +767,16 @@ No prose is written about the session. The span is rebuilt as itself, minus what
 
 Unlike the upstream library, the port asks through the session's own Jev connection, so the configured backend (`typesafeBackend`), key, and the Bun fetch fix all apply, and it redacts what it sends. The upstream's `minReductionRatio` gate has no equivalent here: the verbatim summary either fits `maxSummaryTokens` or Pi's own summary runs.
 
+**Replay (2026-10-27, synthetic, this machine).** No Pi compaction has ever been recorded on the machine that measured it (the heavy sessions ran on providers that compact on their own), so `scripts/fast-jev-replay.mjs --synthetic` replayed 29 cut points taken from real session files — the first user-message boundary past 20,000 estimated span tokens — with the re-fetch ground truth from what the agent actually did next, over the configured Jev backend (jev-1.13). Findings, with the caveat that a synthetic cut has no Pi summary to compare sizes against:
+
+- **Batching is free of distortion:** on the three median-size spans, every one-call-per-request decision (126 calls) matched the batched run's exactly. Packing 24 questions per request loses nothing.
+- **Jev drops almost everything:** of 1,171 scored calls, 0 kept their result whole, 20 were truncated to their head, 1,151 dropped; the answers were uniformly low (median keepCall 0.18, keepResult 0.13), not borderline — no keep threshold short of ~0.1 flips them. On these transcripts the three-way decision collapses to the middle-free outcome: the summary is the always-kept text plus one line per dropped call, ~20% of the span's tokens (median 6.2k of 30.5k).
+- **Re-fetch coverage is poor, the same failure mode as the relevance compaction's:** of the 18 re-fetched calls after a cut that the strategy answered (2 more lost to fallbacks), 4 stayed whole and 14 were dropped. The relevance compaction's recorded replay kept 1 of 34 whole.
+- **Cost is modest:** median 3.5 requests and 39k input tokens per compaction (p90: 8 requests, 154k input tokens — the full state rides every request), median 310 ms.
+- **Three spans fell back:** two whose always-kept text alone passed `maxSummaryTokens` (38k and 111k token spans — the text-is-never-dropped rule has no shrink lever), one needing 16 requests against `maxRequests` 12.
+
+The same replay with the relevance strategy on the same cut points is the missing comparison; the state's result-size notes also mean Jev judges results blind to their content, where the relevance compaction shows each candidate a head/tail sample — showing a sample is the lever if coverage, not size, is what needs fixing.
+
 ### Context filter (beta, off by default)
 
 `context.filter.enabled: true` changes one case only:
