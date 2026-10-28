@@ -55,7 +55,7 @@ export function completeConfig(loaded: Partial<WardenConfig> | undefined): Shape
     rules: section("rules", { ...off, threshold: 1, softThreshold: 0, files: [], fallback: false, maxChars: 500, exclude: [], skip: [], sensitivePaths: {} }),
     // A missing section turns the turn-start reminder off: it is new, so nothing it says was expected.
     rulesAtTurnStart: section("rulesAtTurnStart", { ...off, threshold: 1 }),
-    context: section("context", { ...off, tailMinChars: 1, confidence: 1, duplicateMinChars: Number.MAX_SAFE_INTEGER, recallTool: "none", formatConfidence: 1, compactAppendix: true, dedupeRuns: false, dedupeMessages: false, largeOutput: { ...off, threshold: 1 }, filter: { ...off, chunkChars: 2000, segments: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 } }),
+    context: section("context", { ...off, tailMinChars: 1, confidence: 1, duplicateMinChars: Number.MAX_SAFE_INTEGER, recallTool: "none", formatConfidence: 1, compactAppendix: true, dedupeRuns: false, dedupeMessages: false, largeOutput: { ...off, threshold: 1 }, filter: { ...off, chunkChars: 2000, segments: false, roleGate: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 } }),
     runaway: section("runaway", { ...off, repeats: Number.MAX_SAFE_INTEGER, thinkingRepeats: Number.MAX_SAFE_INTEGER, minChars: Number.MAX_SAFE_INTEGER, recover: false }),
     notify: section("notify", { ...off, cooldownMs: 0, command: [] }),
     // A stale config module leaves the judge trusted: never pausing is today's behaviour, not a new failure mode.
@@ -108,7 +108,7 @@ export function completeConfig(loaded: Partial<WardenConfig> | undefined): Shape
   if (typeof config.context.dedupeRuns !== "boolean") config.context = { ...config.context, dedupeRuns: false };
   if (typeof config.context.dedupeMessages !== "boolean") config.context = { ...config.context, dedupeMessages: false };
   // The context filter was added inside the context section later than the section itself; an older config module leaves it undefined and the filter stays off.
-  if (typeof config.context.filter !== "object" || config.context.filter === null) config.context = { ...config.context, filter: { ...off, chunkChars: 2000, segments: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 } };
+  if (typeof config.context.filter !== "object" || config.context.filter === null) config.context = { ...config.context, filter: { ...off, chunkChars: 2000, segments: false, roleGate: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 } };
   if (typeof config.widget.panelWidth !== "string" && typeof config.widget.panelWidth !== "number") config.widget = { ...config.widget, panelWidth: "40%" };
   // The feedback log flag was added inside the action section later than the section itself; an older config module leaves it undefined and the log stays on.
   if (typeof config.action.feedbackLog !== "boolean") config.action = { ...config.action, feedbackLog: true };

@@ -292,6 +292,8 @@ export interface FilterConfig {
   chunkChars: number;
   /** Kind-aware segments instead of size chunks: whole stack traces, diff hunks, JSON elements, log stanzas, table row groups (header as context), code at top-level definitions. */
   segments: boolean;
+  /** Role gate: one choice question per passage asks what it is for, and a passage the role calls the change site is kept whatever its usefulness score. */
+  roleGate: boolean;
   /** Minimum usefulness score (0 to 3) a chunk needs to be kept; 1.5 means it at least partly answers. */
   minScore: number;
   /** Most characters kept, including the final 1000; above it the highest-scoring chunks win. */
@@ -584,7 +586,7 @@ export function defaultConfig(): WardenConfig {
     rules: { enabled: true, threshold: 0.7, softThreshold: 0, files: [], fallback: true, maxChars: 8000, exclude: [], skip: [], sensitivePaths: {} },
     // 0.3 is the measured cut: 69% of the rules named apply, and 68 of the 73 requests that touch a rule's area get one.
     rulesAtTurnStart: { enabled: true, threshold: 0.3 },
-    context: { enabled: true, tailMinChars: 12000, confidence: 0.8, duplicateMinChars: 2000, recallTool: "auto", formatConfidence: 0.7, compactAppendix: true, dedupeRuns: true, dedupeMessages: false, largeOutput: { enabled: true, threshold: 0.85 }, filter: { enabled: false, chunkChars: 2000, segments: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 } },
+    context: { enabled: true, tailMinChars: 12000, confidence: 0.8, duplicateMinChars: 2000, recallTool: "auto", formatConfidence: 0.7, compactAppendix: true, dedupeRuns: true, dedupeMessages: false, largeOutput: { enabled: true, threshold: 0.85 }, filter: { enabled: false, chunkChars: 2000, segments: false, roleGate: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 } },
     runaway: { enabled: true, repeats: 4, thinkingRepeats: 10, minChars: 400, recover: true },
     notify: { enabled: false, cooldownMs: 10000, command: [] },
     judge: { cooldownMs: 60000, failuresBeforeCooldown: 3 },
@@ -1098,6 +1100,7 @@ function applyGuards(base: WardenConfig, raw: Json, timeoutMs: number, source: "
         enabled: source === "user" ? boolean(raw.context.filter.enabled, base.context.filter.enabled) : base.context.filter.enabled,
         chunkChars: positiveInteger(raw.context.filter.chunkChars, base.context.filter.chunkChars),
         segments: boolean(raw.context.filter.segments, base.context.filter.segments),
+        roleGate: boolean(raw.context.filter.roleGate, base.context.filter.roleGate),
         minScore: typeof raw.context.filter.minScore === "number" && raw.context.filter.minScore >= 0 && raw.context.filter.minScore <= 3 ? raw.context.filter.minScore : base.context.filter.minScore,
         maxKeptChars: positiveInteger(raw.context.filter.maxKeptChars, base.context.filter.maxKeptChars),
         timeoutMs: positiveInteger(raw.context.filter.timeoutMs, base.context.filter.timeoutMs),
@@ -1437,6 +1440,7 @@ export const PROJECT_KEYS: Readonly<Record<string, ProjectKeyClass>> = {
   "context.filter.enabled": { kind: "none", why: "user file only: it sends whole outputs to the judge" },
   "context.filter.chunkChars": { kind: "none", why: "how a filtered output is chunked" },
   "context.filter.segments": { kind: "none", why: "how a filtered output is chunked" },
+  "context.filter.roleGate": { kind: "none", why: "how a filtered output is scored" },
   "context.filter.minScore": { kind: "none", why: "how a filtered chunk is scored" },
   "context.filter.maxKeptChars": { kind: "none", why: "how much of a filtered output is kept" },
   "context.filter.timeoutMs": { kind: "none", why: "the filter's own deadline" },

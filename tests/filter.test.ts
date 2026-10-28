@@ -31,10 +31,10 @@ function fakeJudge(rate: (chunk: string) => number, sent: Request[] = [], delayM
 const needle = (chunk: string) => chunk.includes("NEEDLE") ? 3 : 0;
 
 test("filter config: off by default, parsed from user and project files, malformed values keep defaults", () => {
-  assert.deepEqual(config(), { enabled: false, chunkChars: 2000, segments: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 });
+  assert.deepEqual(config(), { enabled: false, chunkChars: 2000, segments: false, roleGate: false, minScore: 1.5, maxKeptChars: 6000, timeoutMs: 4000 });
   for (const apply of [applyUserOverrides, applyProjectOverrides]) {
     const on = apply(defaultConfig(), { context: { filter: { enabled: true, chunkChars: 3000, minScore: 2, maxKeptChars: 8000, timeoutMs: 2500 } } });
-    assert.deepEqual(on.context.filter, { enabled: apply === applyUserOverrides, chunkChars: 3000, segments: false, minScore: 2, maxKeptChars: 8000, timeoutMs: 2500 });
+    assert.deepEqual(on.context.filter, { enabled: apply === applyUserOverrides, chunkChars: 3000, segments: false, roleGate: false, minScore: 2, maxKeptChars: 8000, timeoutMs: 2500 });
     const bad = apply(defaultConfig(), { context: { filter: { enabled: "yes", chunkChars: -5, minScore: 4, maxKeptChars: 1.5, timeoutMs: 0 } } });
     assert.deepEqual(bad.context.filter, config());
     assert.deepEqual(apply(defaultConfig(), { context: { filter: null } }).context.filter, config());
@@ -162,4 +162,57 @@ test("the filter's deadline is timeoutMs", async () => {
   const result = await filterOutput(log(400), input, { config: { ...config(), timeoutMs: 50 }, judge: hang });
   assert.equal(!result.ok && result.reason, "timeout");
   assert.ok(Date.now() - started < 2000);
+});
+
+/* ─── Role gate ─────────────────────────────────────────────────────── */
+
+/** Answers the score questions from the rate and every role question from `roles` by chunk index. */
+function roleJudge(rate: (chunk: string) => number, roles: Record<number, string>, sent: Request[] = []): Judge {
+  return {
+    async evaluate(request: unknown) {
+      const body = request as Request;
+      sent.push(body);
+      const answers = Object.fromEntries(Object.entries(body.questions).map(([id, question]) => {
+        const index = Number((id.match(/^r?c?(\d+)/) ?? [])[1]) - 1;
+        return question.type === "choice"
+          ? [id, { type: "choice", choice: roles[index] ?? "background", probabilities: {} }]
+          : [id, { type: "score", score: rate(String(body.state[`c${index + 1}`])), confidence: 0.9, legend: {}, probabilities: {} }];
+      }));
+      return { model: "jev-test", elapsedMs: 1, answers, usage: { input_tokens: 1, output_tokens: 0 } } as never;
+    },
+  };
+}
+
+test("role gate: a change site is kept whatever its usefulness score, and the trace entry counts it", async () => {
+  const roleGate = { ...config(), roleGate: true };
+  const sent: Request[] = [];
+  const text = log(1200, [100]);
+  const outcome = await filterOutput(text, input, { config: roleGate, judge: roleJudge(chunk => chunk.includes("NEEDLE") ? 3 : 0, { 0: "change_site", 3: "change_site" }, sent) });
+  assert.ok(outcome.ok);
+  const questions = Object.keys(sent[0]!.questions);
+  assert.ok(questions.includes("c1") && questions.includes("r1"), "each passage gets a score and a role question");
+  assert.equal((sent[0]!.questions.r1 as { type: string }).type, "choice");
+  assert.ok(outcome.roleKept >= 1, "a change site below the score threshold is kept by role");
+  assert.ok(outcome.text.includes("NEEDLE"));
+  // The chunk-0 passage scores 0 but is the change site: it is kept.
+  assert.ok(outcome.roleKept <= 2);
+});
+
+test("role gate: when more qualifies than fits, the change site is kept first", () => {
+  const chunks = ["a".repeat(1200), "b".repeat(1200), "c".repeat(1200)];
+  const scores = [0, 3, 3];
+  // A budget that fits one passage besides the always-kept tail: the change site (score 0) wins over both high scorers.
+  const kept = selectChunks(chunks, scores, { minScore: 1.5, maxKeptChars: 2300 }, ["change_site", undefined, undefined]);
+  assert.ok(kept);
+  assert.ok(kept.text.startsWith("a".repeat(50)), "the change site is kept");
+  assert.equal(kept.roleKept, 1);
+  assert.ok(!kept.text.includes("bbb"), "a higher-scoring non-change-site passage gives way");
+});
+
+test("role gate config: off by default, user and project may turn it on", () => {
+  assert.equal(defaultConfig().context.filter.roleGate, false);
+  const user = applyUserOverrides(defaultConfig(), { context: { filter: { roleGate: true } } });
+  assert.equal(user.context.filter.roleGate, true);
+  const project = applyProjectOverrides(defaultConfig(), { context: { filter: { roleGate: true } } });
+  assert.equal(project.context.filter.roleGate, true, "it sends one extra question about passages already being sent, so a project may set it");
 });
