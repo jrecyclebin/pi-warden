@@ -6,8 +6,9 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createTypeSafe } from 'pi-typesafe';
-import { buildRequests, buildUnits, compactionCandidates, defaultConfig, KEEP_CHARS, relevanceCompaction, relations, renderSummary, summaryTokens, taskSpine } from '../dist/index.js';
+import { authState, createTypeSafe } from 'pi-typesafe';
+import { buildRequests, buildUnits, compactionCandidates, defaultConfig, KEEP_CHARS, loadConfig, relevanceCompaction, relations, renderSummary, summaryTokens, taskSpine } from '../dist/index.js';
+import { judgeOptions } from '../dist/backend.js';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : fallback; };
@@ -170,7 +171,11 @@ for (const plan of plans) {
   budget -= plan.requests;
   runBatched.push(plan);
 }
-const client = createTypeSafe({ timeoutMs: REQUEST_TIMEOUT_MS, maxRequests: cap });
+// The client carries the session's configured backend (user file), so the replay asks the same destination a session does.
+const userBackend = loadConfig().typesafeBackend;
+const auth = authState({ backend: userBackend });
+if (!auth.usable) { console.error(`Jev unavailable (${auth.kind}${auth.reason ? `: ${auth.reason}` : ''}); set ${auth.keyName} or run /warden enable in Pi.`); process.exit(1); }
+const client = createTypeSafe(judgeOptions({ maxRequests: cap, timeoutMs: REQUEST_TIMEOUT_MS, typesafeBackend: userBackend }));
 let sent = 0;
 const judge = { evaluate: (request, options) => { sent++; return client.evaluate(request, options); } };
 
