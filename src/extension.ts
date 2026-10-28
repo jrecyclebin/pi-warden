@@ -2756,7 +2756,7 @@ export default function wardenExtension(host: ExtensionAPI): void {
         requestsLeft: () => (judge.getSpend().caps.maxRequests ?? config.maxRequests) - judge.getUsage().requestsStarted,
       });
       const stats = result.stats;
-      const counts = `${stats.candidates} scored units, ${stats.requests} request${stats.requests === 1 ? "" : "s"}, ${stats.inputTokens} input tokens, ${stats.elapsedMs} ms`;
+      const counts = `${stats.candidates} scored units${stats.superseded ? `, ${stats.superseded} superseded first (no request spent on them)` : ""}, ${stats.requests} request${stats.requests === 1 ? "" : "s"}, ${stats.inputTokens} input tokens, ${stats.elapsedMs} ms`;
       if (!result.ok) {
         // A budget stop never turns judgments off: the guards keep what is left of the budget.
         if (result.reason === "budget") { if (ctx.hasUI) ctx.ui.notify(`warden: relevance compaction stopped to spare the request budget (${result.detail ?? "budget reached"}); Pi's summary runs.`, "warning"); }

@@ -145,7 +145,7 @@ test("relevance compaction: 30 tool calls take 16 + 14 keep questions on a 16-qu
     messages.push({ role: "assistant", content: [{ type: "toolCall", id: `c${index}`, name: "read", arguments: { path: `src/file${index}.ts` } }] });
     messages.push({ role: "toolResult", toolCallId: `c${index}`, toolName: "read", content: [{ type: "text", text: `export const value${index} = ${index};` }], isError: false });
   }
-  const config = { keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 2000, maxRequests: 12 };
+  const config = { keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 2000, maxRequests: 12, supersession: false };
   const run = async (maxQuestions: number) => {
     const { judge, counts } = fakeJudge(maxQuestions);
     const result = await relevanceCompaction({ messages, task: "Fix the date parser." }, { judge, config, concurrency: 1 });

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createTypeSafe } from 'pi-typesafe';
-import { buildRequests, buildUnits, compactionCandidates, defaultConfig, KEEP_CHARS, relevanceCompaction, renderSummary, summaryTokens, taskSpine } from '../dist/index.js';
+import { buildRequests, buildUnits, compactionCandidates, defaultConfig, KEEP_CHARS, relevanceCompaction, relations, renderSummary, summaryTokens, taskSpine } from '../dist/index.js';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : fallback; };
@@ -18,7 +18,8 @@ const sessionsRoot = resolve(flag('--sessions', join(homedir(), '.pi', 'agent', 
 const SINGLE_RUNS = 3;
 /** The extension's own per-request timeout (config.timeoutMs), so replay latency matches a session. */
 const REQUEST_TIMEOUT_MS = defaultConfig().timeoutMs;
-const compaction = defaultConfig().compaction;
+/** `--supersession` pre-prunes superseded calls before the requests, as `compaction.supersession` would in a session. */
+const compaction = { ...defaultConfig().compaction, supersession: args.includes('--supersession') };
 
 function walk(dir, files = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -142,10 +143,15 @@ function coverage(key, units, kept) {
 const compactions = recordedCompactions();
 const plans = compactions.map(item => {
   const { units, files } = buildUnits(item.input);
+  // `--supersession` pre-prunes exactly as the compaction would: relations from the span's calls, then no question for them.
+  const observed = units.filter(unit => unit.kind === 'tool' && unit.input !== undefined);
+  const skip = new Set(compaction.supersession ? relations(observed.map(unit => ({ id: unit.id, tool: unit.tool, input: unit.input }))).map(relation => relation.older) : []);
   // Text that is always kept over budget falls back before any request.
   const fits = summaryTokens(renderSummary(units, files, new Set())) <= compaction.maxSummaryTokens;
-  return { item, units, fits, candidates: compactionCandidates(units).length, requests: fits ? buildRequests(units, item.input).length : 0 };
+  return { item, units, skip, fits, candidates: compactionCandidates(units).filter(unit => !skip.has(unit.id)).length, requests: fits ? buildRequests(units, item.input, undefined, skip).length : 0 };
 });
+const superseded = plans.reduce((sum, plan) => sum + plan.skip.size, 0);
+if (compaction.supersession) console.log(`supersession: ${superseded} units pre-pruned across ${plans.length} compactions`);
 // The one-question runs use the spans nearest the median size, so their states look like a typical compaction's.
 const medianUnits = quantile(plans.map(plan => plan.candidates), 0.5);
 const singles = plans.filter(plan => plan.fits).sort((a, b) => Math.abs(a.candidates - medianUnits) - Math.abs(b.candidates - medianUnits)).slice(0, SINGLE_RUNS);

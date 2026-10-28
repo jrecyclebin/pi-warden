@@ -310,6 +310,8 @@ export interface CompactionConfig {
   timeoutMs: number;
   /** Requests one compaction may send; a span that needs more keeps Pi's summary and sends nothing. */
   maxRequests: number;
+  /** Supersession pre-pruning: a call a later one re-ran, re-read, or edited past is dropped before any request. Off by default. Sends nothing. */
+  supersession: boolean;
   /** Providers of the active model for which Pi's summary always runs (a provider that compacts on its own). */
   skipProviders: string[];
 }
@@ -609,7 +611,7 @@ export function defaultConfig(): WardenConfig {
     trial: { silentHalf: false },
     waste: { enabled: true, tip: false, every: 20, sleep: true, paging: true, search: true, recheck: true },
     // pi-claude-bridge compacts its own models and cancels on failure; its summary must not be replaced.
-    compaction: { enabled: false, keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, skipProviders: ["claude-bridge"] },
+    compaction: { enabled: false, keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, supersession: false, skipProviders: ["claude-bridge"] },
     warnings: [],
   };
 }
@@ -1207,6 +1209,7 @@ function applyCompaction(base: CompactionConfig, raw: unknown, source: "user" | 
     maxSummaryTokens: Math.max(1000, positiveInteger(raw.maxSummaryTokens, base.maxSummaryTokens)),
     timeoutMs: Math.min(MAX_COMPACTION_TIMEOUT_MS, positiveInteger(raw.timeoutMs, base.timeoutMs)),
     maxRequests: positiveInteger(raw.maxRequests, base.maxRequests),
+    supersession: boolean(raw.supersession, base.supersession),
     skipProviders: globList(raw.skipProviders, base.skipProviders),
   };
 }
@@ -1466,6 +1469,7 @@ export const PROJECT_KEYS: Readonly<Record<string, ProjectKeyClass>> = {
   "compaction.maxSummaryTokens": { kind: "none", why: "the summary's size" },
   "compaction.timeoutMs": { kind: "none", why: "the compaction deadline" },
   "compaction.maxRequests": { kind: "none", why: "the compaction budget" },
+  "compaction.supersession": { kind: "none", why: "deterministic pre-pruning that sends nothing" },
   "compaction.skipProviders": { kind: "none", why: "which providers keep their own summary" },
 
   "prefs.enabled": { kind: "none", why: "standing preferences are context, not a check" },

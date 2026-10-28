@@ -10,6 +10,8 @@
 import { ask, DEFAULT_BACKEND_LIMITS, fanOut, noul } from "pi-typesafe";
 import type { JsonValue, NoulQuestion } from "pi-typesafe";
 import { redact } from "./redact.js";
+import { relations, supersedeNote } from "./supersede.js";
+import type { ObservedCall, Relation } from "./supersede.js";
 import type { LimitedJudge } from "./rules.js";
 import type { CompactionConfig } from "./config.js";
 import type { TaskSpine } from "./shape.js";
@@ -85,6 +87,8 @@ export interface ToolUnit {
   flagged: boolean;
   /** The context saver already replaced the result with its excerpt: kept as that excerpt, uncut. */
   compressed: boolean;
+  /** Supersession pre-pruned the call (a later call re-ran it, re-read its lines, or edited its file): the note its left-out line carries. */
+  note?: string | undefined;
 }
 
 export interface NoteUnit { kind: "note"; id: string; label: string; text: string }
@@ -108,7 +112,7 @@ export interface RelevanceInput {
 
 export interface RelevanceOptions {
   judge: LimitedJudge;
-  config: Pick<CompactionConfig, "keepThreshold" | "maxSummaryTokens" | "timeoutMs" | "maxRequests">;
+  config: Pick<CompactionConfig, "keepThreshold" | "maxSummaryTokens" | "timeoutMs" | "maxRequests" | "supersession">;
   signal?: AbortSignal | undefined;
   /** Each request's own deadline (the judge client's `timeoutMs`); `config.timeoutMs` bounds the whole compaction. */
   requestTimeoutMs?: number | undefined;
@@ -130,6 +134,8 @@ export interface CompactionStats {
   kept: number;
   /** Units reduced to one line, including results never scored (flagged, or no result). */
   dropped: number;
+  /** Units supersession pre-pruned: no request is spent on them, and no score can keep them. */
+  superseded: number;
   requests: number;
   inputTokens: number;
   elapsedMs: number;
@@ -451,7 +457,7 @@ function taskState(input: Pick<RelevanceInput, "task" | "spine" | "focus">): Jso
 export interface KeepRequest { state: { task: JsonObject; conversation: string[]; candidates: JsonObject }; questions: Record<string, NoulQuestion>; ids: string[] }
 
 /** Keep questions packed into requests that stay under the byte limit. Every request carries the task and the outline. */
-export function buildRequests(units: readonly Unit[], input: Pick<RelevanceInput, "task" | "spine" | "focus">, questionsPerRequest = MAX_QUESTIONS): KeepRequest[] {
+export function buildRequests(units: readonly Unit[], input: Pick<RelevanceInput, "task" | "spine" | "focus">, questionsPerRequest = MAX_QUESTIONS, skip?: ReadonlySet<string>): KeepRequest[] {
   const task = taskState(input);
   const conversation = outline(units);
   const perRequest = Math.max(1, Math.min(MAX_QUESTIONS, Math.floor(questionsPerRequest)));
@@ -461,6 +467,7 @@ export function buildRequests(units: readonly Unit[], input: Pick<RelevanceInput
   let current: KeepRequest | undefined;
   let size = 0;
   for (const unit of candidates(units)) {
+    if (skip?.has(unit.id)) continue;
     const view = candidateView(unit);
     const question = keepQuestion(unit.id);
     const entry = bytes({ [unit.id]: view }) + bytes({ [unit.id]: question });
@@ -513,7 +520,7 @@ function keptSection(unit: Unit, kept: boolean, savedPathFor: ((text: string) =>
 
 function leftOutLine(unit: Unit): string {
   switch (unit.kind) {
-    case "tool": return `${unit.line} · ${unit.result === undefined ? "no result" : unit.flagged ? "result withheld: possible prompt injection" : `${unit.result.length} chars${unit.isError ? ", failed" : ""}`}`;
+    case "tool": return `${unit.line} · ${unit.result === undefined ? "no result" : unit.flagged ? "result withheld: possible prompt injection" : `${unit.result.length} chars${unit.isError ? ", failed" : ""}`}${unit.note ? ` · ${unit.note}` : ""}`;
     case "note": return `extension message ${unit.label} · ${unit.text.length} chars`;
     case "summary": return `earlier summary part "${unit.label}" · ${unit.text.length} chars`;
     default: return unit.text;
@@ -549,12 +556,27 @@ export const summaryTokens = (summary: string) => Math.ceil(summary.length / 4);
 
 /* ─── Run ───────────────────────────────────────────────────────────── */
 
+/** A tool unit as supersession sees it: its id and the call's arguments, which an earlier-compaction read-back does not have. */
+const observed = (unit: Unit): unit is ToolUnit & { input: Record<string, unknown> } => unit.kind === "tool" && unit.input !== undefined;
+
+/** The calls a later call made obsolete: dropped before any request, their left-out line says why. */
+function preprune(units: readonly Unit[], cwd?: string): { skip: Set<string>; byUnit: Map<string, Relation[]> } {
+  const observedCalls = units.filter(observed).map((unit): ObservedCall => ({ id: unit.id, tool: unit.tool, input: unit.input }));
+  const byUnit = new Map<string, Relation[]>();
+  for (const relation of relations(observedCalls, cwd)) byUnit.set(relation.older, [...(byUnit.get(relation.older) ?? []), relation]);
+  const skip = new Set(byUnit.keys());
+  for (const unit of units) if (unit.kind === "tool" && skip.has(unit.id)) unit.note = supersedeNote(byUnit.get(unit.id) ?? []);
+  return { skip, byUnit };
+}
+
 export async function relevanceCompaction(input: RelevanceInput, options: RelevanceOptions): Promise<RelevanceResult> {
   const started = Date.now();
   const { units, files } = buildUnits(input);
-  const scored = candidates(units);
+  // Supersession is deterministic and free, so it runs before the budget checks: a span it empties spends nothing.
+  const { skip } = options.config.supersession ? preprune(units) : { skip: new Set<string>() };
+  const scored = candidates(units).filter(unit => !skip.has(unit.id));
   const scores: Record<string, number> = {};
-  const stats: CompactionStats = { candidates: scored.length, kept: 0, dropped: units.filter(unit => unit.kind === "tool" || unit.kind === "note" || unit.kind === "summary").length, requests: 0, inputTokens: 0, elapsedMs: 0, threshold: options.config.keepThreshold, summaryTokens: 0 };
+  const stats: CompactionStats = { candidates: scored.length, kept: 0, dropped: units.filter(unit => unit.kind === "tool" || unit.kind === "note" || unit.kind === "summary").length, superseded: [...skip].filter(id => units.some(unit => unit.kind === "tool" && unit.id === id && unit.result !== undefined && !unit.flagged)).length, requests: 0, inputTokens: 0, elapsedMs: 0, threshold: options.config.keepThreshold, summaryTokens: 0 };
   const budget = options.config.maxSummaryTokens;
   const fail = (reason: FallbackReason, detail?: string): RelevanceResult => ({ ok: false, reason, ...(detail ? { detail } : {}), scores, stats: { ...stats, elapsedMs: Date.now() - started } });
   if (options.signal?.aborted) return fail("aborted");
@@ -562,7 +584,7 @@ export async function relevanceCompaction(input: RelevanceInput, options: Releva
   const floor = renderSummary(units, files, new Set(), options.savedPathFor);
   if (summaryTokens(floor) > budget) return fail("too large", `${summaryTokens(floor)} tokens before any tool output`);
   if (scored.length) {
-    const requests = buildRequests(units, input, Math.min(options.questionsPerRequest ?? MAX_QUESTIONS, options.judge.limits?.maxQuestions ?? DEFAULT_BACKEND_LIMITS.maxQuestions));
+    const requests = buildRequests(units, input, Math.min(options.questionsPerRequest ?? MAX_QUESTIONS, options.judge.limits?.maxQuestions ?? DEFAULT_BACKEND_LIMITS.maxQuestions), skip);
     // Both limits are checked before anything is sent, so a compaction that cannot finish spends nothing.
     const cap = options.config.maxRequests;
     if (requests.length > cap) return fail("budget", `${requests.length} requests needed, compaction.maxRequests is ${cap}`);

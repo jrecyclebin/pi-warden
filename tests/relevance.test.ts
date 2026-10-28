@@ -7,7 +7,7 @@ import { completeConfig } from "../src/shape.js";
 import { buildRequests, buildUnits, formatCompaction, KEEP_CHARS, MAX_QUESTIONS, MAX_REQUEST_BYTES, RELEVANCE_HEADER, relevanceCompaction, renderSummary, REQUEST_RESERVE } from "../src/relevance.js";
 import type { RelevanceInput, SpanMessage, ToolUnit, Unit } from "../src/relevance.js";
 
-const config = { keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 2000, maxRequests: 12 };
+const config = { keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 2000, maxRequests: 12, supersession: false };
 
 /** Answers every keep question from `scores` by unit id (0.1 when unlisted) and records each request. */
 function fakeJudge(scores: Record<string, number> = {}, sent: Array<{ state: unknown; questions: Record<string, unknown> }> = []): Judge {
@@ -226,9 +226,9 @@ test("a span with no scored unit needs no request", async () => {
 });
 
 test("config: off by default, user overrides, clamps, and a missing section keeps Pi's summary", () => {
-  assert.deepEqual(defaultConfig().compaction, { enabled: false, keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, skipProviders: ["claude-bridge"] });
+  assert.deepEqual(defaultConfig().compaction, { enabled: false, keepThreshold: 0.5, maxSummaryTokens: 20000, timeoutMs: 20000, maxRequests: 12, supersession: false, skipProviders: ["claude-bridge"] });
   const user = applyUserOverrides(defaultConfig(), { compaction: { enabled: true, keepThreshold: 0.7, maxSummaryTokens: 10, timeoutMs: 999999, maxRequests: 0, skipProviders: ["a", "", 3] } });
-  assert.deepEqual(user.compaction, { enabled: true, keepThreshold: 0.7, maxSummaryTokens: 1000, timeoutMs: 120000, maxRequests: 12, skipProviders: ["a"] });
+  assert.deepEqual(user.compaction, { enabled: true, keepThreshold: 0.7, maxSummaryTokens: 1000, timeoutMs: 120000, maxRequests: 12, supersession: false, skipProviders: ["a"] });
   assert.deepEqual(applyUserOverrides(defaultConfig(), { compaction: { keepThreshold: 7 } }).compaction.keepThreshold, 0.5);
   const { compaction: _dropped, ...stale } = defaultConfig();
   const shaped = completeConfig(stale);
@@ -239,7 +239,7 @@ test("config: off by default, user overrides, clamps, and a missing section keep
 test("status line", () => {
   assert.equal(formatCompaction(false, { runs: 0, replaced: 0, fallbacks: {} }), "Relevance compaction: off (compaction.enabled).");
   assert.equal(formatCompaction(true, { runs: 0, replaced: 0, fallbacks: {} }), "Relevance compaction: on; no compaction yet this session.");
-  assert.equal(formatCompaction(true, { runs: 2, replaced: 1, fallbacks: { timeout: 1 }, last: { candidates: 9, kept: 3, dropped: 6, requests: 1, inputTokens: 10, elapsedMs: 1500, threshold: 0.5, summaryTokens: 800 } }),
+  assert.equal(formatCompaction(true, { runs: 2, replaced: 1, fallbacks: { timeout: 1 }, last: { candidates: 9, kept: 3, dropped: 6, superseded: 0, requests: 1, inputTokens: 10, elapsedMs: 1500, threshold: 0.5, summaryTokens: 800 } }),
     "Relevance compaction: 2 compactions, 1 replaced Pi's summary, Pi's summary ran instead (timeout 1). Last: kept 3 of 9 scored units, 1 request, 1.5 s, ~800 tokens.");
 });
 
