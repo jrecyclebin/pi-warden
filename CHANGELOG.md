@@ -13,6 +13,22 @@ How to keep this current: add the entry in the same pull request as the change, 
 
 <!-- Empty. Next release starts here. -->
 
+## 2.2.5
+
+### Changed
+
+- `pi-typesafe` moves to 0.13.1, which replays the judge's response body itself on Bun, inside the caller's abort window.
+
+### Fixed
+
+- The local Bun transport shim added in 2.2.4 is gone now that the dependency carries the fix; `judgeOptions()` passes no transport again, and a test pins that on both runtimes. The end-to-end judgment and the timeout tests still run under `npm test` and `npm run test:bun`.
+
+## 2.2.4
+
+### Fixed
+
+- Judges no longer fail on Bun. The TypeSafe SDK's response buffering took a reader on the judge's response body and released it, which leaves the body used on Bun, so every judgment came back as an unreadable response and only the offline guards spoke. The transport now reads the body itself and hands the SDK a buffered response, inside the caller's abort window so timeouts still reject; Node is unchanged. `tests/backend.test.ts` now runs under `test:bun`, so the regression cannot return unnoticed.
+
 ## 2.2.3
 
 ### Fixed
